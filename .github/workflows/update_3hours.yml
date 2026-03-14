@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: KPX 실적 수집 실행
-        run: python run_3hours.py
+        run: python utils/run_3hours.py
         # KPX past API는 인증키 불필요하므로 env 없음
 
       - name: DB 자동 커밋
