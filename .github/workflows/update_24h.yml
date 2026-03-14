@@ -25,7 +25,7 @@ jobs:
         env:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           KPX_API_KEY: ${{ secrets.KPX_API_KEY }}
-        run: python run_24hours.py
+        run: python utils/run_24hours.py
 
       - name: DB 자동 커밋
         uses: stefanzweifel/git-auto-commit-action@v5
