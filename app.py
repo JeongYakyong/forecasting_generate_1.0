@@ -471,20 +471,34 @@ if menu == "Option A : DB 관리":
             col1.metric("총 데이터 수", f"{len(full_hist_df):,} 행")
             col2.metric("시작 날짜", min_date.strftime('%Y-%m-%d'))
             col3.metric("최근 날짜", max_date.strftime('%Y-%m-%d'))
-            
+            today_midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            check_df = full_hist_df[full_hist_df.index < today_midnight]
+            status_info = check_data_status(check_df)
+
             if gap_days > 0:
-                col4.metric(label="업데이트 필요 (오늘 기준)", value=f"{gap_days}일 분량", delta=f"{gap_days}일 지연됨", delta_color="inverse")
+                col4.metric(
+                    label="업데이트 필요 (오늘 기준)", 
+                    value=f"{gap_days}일 분량", 
+                    delta=f"{gap_days}일 지연됨", 
+                    delta_color="inverse"
+                )
+            elif gap_days == 0 and status_info['status'] == "Good":
+                col4.metric(
+                    label="업데이트 필요 (오늘 기준)", 
+                    value="최신 상태", 
+                    delta="결측 없음", 
+                    delta_color="normal"
+                )
             elif gap_days == 0:
-                col4.metric(label="업데이트 필요 (오늘 기준)", value="최신 상태", delta="완벽합니다", delta_color="normal")
+                col4.metric(
+                    label="업데이트 필요 (오늘 기준)", 
+                    value="최신 상태", 
+                    delta=f"결측 {status_info['incomplete_rows']}건", 
+                    delta_color="inverse"
+                )
             else:
                 col4.metric("업데이트 필요", "미래 데이터 포함", f"+{abs(gap_days)}일")
                         
-            # 주요 컬럼 기준 무결성 검사
-            today_midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            check_df = full_hist_df[full_hist_df.index < today_midnight]
-            
-            status_info = check_data_status(check_df)
-            
             # 불완전 행 요약 (주요 컬럼 기준)
             if status_info['incomplete_rows'] > 0:
                 st.warning(f"⚠️ timestamp는 존재하지만 주요 컬럼 값이 비어있는 행: **{status_info['incomplete_rows']}건**")
@@ -1057,7 +1071,7 @@ elif menu == "Option D : 예측 결과 시각화":
             st.session_state['vis_warn_max'] = 900
         # 📌 수정포인트: 실측 오버레이 체크박스 상태 초기화
         if 'vis_show_actual' not in st.session_state:
-            st.session_state['vis_show_actual'] = True
+            st.session_state['vis_show_actual'] = False
         
         plot_options = {
             'est_demand': '총 전력수요 예측 (est_demand)',
@@ -1589,8 +1603,8 @@ elif menu == "Option F : 시스템 안내":
             st.write("#### Data Status")
             st.write(
                 "DB에 저장된 전체 실측 데이터의 무결성을 점검합니다.\n\n"
-                "시계열 누락(빠진 시간대), 컬럼별 결측치, 주요 컬럼의 불완전 행을 3가지 관점에서 검사하며, "
-                "API로 채워지지 않는 결측이라면 **시간 비례 보간(최대 3건 연속)**을 적용할 수 있습니다."
+                "시계열 누락(빠진 시간대), 컬럼별 결측치, 주요 컬럼의 불완전 행을 3가지 관점에서 검사하며, API로 채워지지 않는 결측이라면 \n\n"
+                "**시간 비례 보간(최대 3건 연속)**을 적용할 수 있습니다."
             )
             st.write("#### API 데이터 수집")
             st.write(
