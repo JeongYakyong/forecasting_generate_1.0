@@ -55,6 +55,10 @@ class JejuEnergyDB:
                 Wind_Capacity_Est REAL,
                 Solar_Utilization REAL,
                 Wind_Utilization REAL,
+                -- Optional Reference (EDA 참고용, 결측치 검사 제외)
+                HVDC_Total REAL,
+                LNG_Gen REAL,
+                Oil_Gen REAL,
                 -- Metadata
                 updated_at TEXT
             )
@@ -88,7 +92,13 @@ class JejuEnergyDB:
                 updated_at TEXT
             )
         """)
-        
+          # 기존 DB 마이그레이션: 컬럼이 없으면 추가
+        for col in ['HVDC_Total', 'LNG_Gen', 'Oil_Gen']:
+            try:
+                cursor.execute(f"ALTER TABLE historical_data ADD COLUMN {col} REAL")
+            except Exception:
+                pass  # 이미 존재하면 무시
+
         self.conn.commit()
         print("테이블 초기화 완료")
     
