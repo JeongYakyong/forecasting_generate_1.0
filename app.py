@@ -1057,7 +1057,7 @@ elif menu == "Option D : 예측 결과 시각화":
             st.session_state['vis_warn_max'] = 900
         # 📌 수정포인트: 실측 오버레이 체크박스 상태 초기화
         if 'vis_show_actual' not in st.session_state:
-            st.session_state['vis_show_actual'] = True
+            st.session_state['vis_show_actual'] = False
         
         plot_options = {
             'est_demand': '총 전력수요 예측 (est_demand)',
