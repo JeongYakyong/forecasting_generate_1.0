@@ -873,9 +873,10 @@ elif menu == "Option C : 발전량 예측":
     st.caption(f"모델 추론에 필요한 데이터: 과거 실측 336시간 + 미래 예보 24시간 (대상일: {target_date})")
     
     # 과거 실측 데이터 범위: target_date 기준 14일 전 ~ 전일 23시
-    past_end = f"{target_date} 00:00:00"
-    past_start = (target_date - timedelta(days=14)).strftime('%Y-%m-%d')
-    #past_start = (target_date - timedelta(days=15)).strftime('%Y-%m-%d')
+    past_end = f"{target_date - timedelta(days=1)} 23:00:00"
+    past_start = f"{target_date - timedelta(days=14)} 00:00:00"
+    #past_end = f"{target_date} 00:00:00"
+    #past_start = (target_date - timedelta(days=14)).strftime('%Y-%m-%d')
     past_df = db.get_historical(past_start, past_end)
     
     # 미래 예보 데이터 범위: target_date 00시 ~ 23시
