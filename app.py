@@ -51,6 +51,7 @@ run_model_prediction, prepare_model_input, daily_forecast_kpx, daily_forecast_km
 # 공통 헬퍼 함수
 # ==========================================
 EDA_ONLY_COLUMNS = {'HVDC_Total', 'LNG_Gen', 'Oil_Gen'}
+PREDICTION_OUTPUT_COLUMNS = {'est_Solar_Utilization', 'est_Wind_Utilization'}
 
 def check_data_status(df, key_columns=None):
     """
@@ -873,7 +874,8 @@ elif menu == "Option C : 발전량 예측":
     
     # 과거 실측 데이터 범위: target_date 기준 14일 전 ~ 전일 23시
     past_end = f"{target_date} 00:00:00"
-    past_start = (target_date - timedelta(days=15)).strftime('%Y-%m-%d')
+    past_start = (target_date - timedelta(days=14)).strftime('%Y-%m-%d')
+    #past_start = (target_date - timedelta(days=15)).strftime('%Y-%m-%d')
     past_df = db.get_historical(past_start, past_end)
     
     # 미래 예보 데이터 범위: target_date 00시 ~ 23시
@@ -885,9 +887,23 @@ elif menu == "Option C : 발전량 예측":
     future_hours = len(future_df) if not future_df.empty else 0
     
     # 결측치 검사
-    past_missing = int(past_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum().sum()) if not past_df.empty else 0
-    future_missing = int(future_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum().sum()) if not future_df.empty else 0
-    
+    #past_missing = int(past_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum().sum()) if not past_df.empty else 0
+    #future_missing = int(future_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum().sum()) if not future_df.empty else 0
+
+    EXCLUDE_FROM_CHECK = EDA_ONLY_COLUMNS | PREDICTION_OUTPUT_COLUMNS
+    # → {'HVDC_Total', 'LNG_Gen', 'Oil_Gen', 'est_Solar_Utilization', 'est_Wind_Utilization'}
+
+    past_missing = (
+        int(past_df.drop(columns=EXCLUDE_FROM_CHECK, errors='ignore').isna().sum().sum())
+        if not past_df.empty else 0
+    )
+
+    future_missing = (
+        int(future_df.drop(columns=EXCLUDE_FROM_CHECK, errors='ignore').isna().sum().sum())
+        if not future_df.empty else 0
+    )
+
+
     col1, col2, col3, col4 = st.columns(4)
     
     # 과거 실측 상태
@@ -926,30 +942,31 @@ elif menu == "Option C : 발전량 예측":
     
     # 문제가 있을 때 구체적 안내
     if not past_ok or not future_ok:
+        
         with st.expander("⚠️ 부족한 데이터 상세 확인", expanded=True):
             if past_hours < 336:
                 st.warning(f"📈 **실측 데이터 부족**: {past_hours}시간 수집됨 (필요: 336시간). [Option A : DB 관리 → API 데이터 수집]에서 실측 데이터를 수집해 주세요.")
+            # 과거 실측
             if past_missing > 0 and not past_df.empty:
-                st.warning(f"📈 **실측 결측치 발견**: {past_missing}건. [Option A : DB 관리 → Data Status]에서 보간하거나 API로 재수집하세요.")
-                missing_cols = past_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum()
+                missing_cols = past_df.drop(columns=EXCLUDE_FROM_CHECK, errors='ignore').isna().sum()
                 missing_cols = missing_cols[missing_cols > 0]
                 if not missing_cols.empty:
-                    st.caption( " " + ",".join([f"{col}: {cnt}건" for col, cnt in missing_cols.items()]))
+                    st.caption(" " + ", ".join([f"{col}: {cnt}건" for col, cnt in missing_cols.items()]))
             
             if future_hours < 24:
                 st.warning(f"🌤️ **Forecast 데이터 부족**: {future_hours}시간 수집됨 (필요: 24시간). [Option A : DB 관리 → API 데이터 수집]에서 예보를 수집해 주세요.")
+            # 미래 예보
             if future_missing > 0 and not future_df.empty:
-                st.warning(f"🌤️ **Forecast 결측치 발견**: {future_missing}건. [Option A : DB 관리 → API 데이터 수집]에서 예보를 재수집하세요.")
-                missing_cols_f = future_df.drop(columns=EDA_ONLY_COLUMNS, errors='ignore').isna().sum()
+                missing_cols_f = future_df.drop(columns=EXCLUDE_FROM_CHECK, errors='ignore').isna().sum()
                 missing_cols_f = missing_cols_f[missing_cols_f > 0]
                 if not missing_cols_f.empty:
-                    st.caption(" " + ",".join([f"{col}: {cnt}건" for col, cnt in missing_cols_f.items()]))
-    
+                    st.caption(" " + ", ".join([f"{col}: {cnt}건" for col, cnt in missing_cols_f.items()]))
+
     # ==========================================
     # 예측 실행 버튼
     # ==========================================
     st.markdown("---")
-    
+
     if st.button("🚀 예측 실행", type="primary", width="stretch"):
         with st.spinner(f"{target_date} 예측을 진행 중입니다... (데이터 검증 및 모델 추론)"):
             
