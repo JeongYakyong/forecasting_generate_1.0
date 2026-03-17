@@ -1293,13 +1293,17 @@ elif menu == "Option D : 예측 결과 시각화":
                 if target_start <= now <= target_end:
                     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
                     
-                    # 세로선
-                    fig.add_shape(
-                        type="line",
-                        x0=now_str, x1=now_str,
-                        y0=0, y1=1,
+                    # 세로선 추가
+                    fig.add_vline(x=now_str, line_width=1, line_dash="solid", line_color="black")
+                    
+                    # 텍스트 라벨 추가
+                    fig.add_annotation(
+                        x=now_str,
+                        y=1.02,
                         yref="paper",
-                        line=dict(color="red", width=2, dash="dash")
+                        text="현재",
+                        showarrow=False,
+                        font=dict(size=10, color="black")
                     )
                 # --- 위험 구간 음영 ---
                 def draw_danger_zones(condition_series, fill_color, annotation_text=None, show_legend_label=None, layer_pos="below", fill_opacity=0.15):

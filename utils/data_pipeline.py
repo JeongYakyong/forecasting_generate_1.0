@@ -327,7 +327,7 @@ def daily_forecast_kma(start_date, end_date):
     while current_dt <= end_dt:
         target_date = current_dt.strftime("%Y-%m-%d")
         try:
-            ncm_forecast = fetch_kma_future_ncm(33.50, 126.53, KMA_KEY, target_date)
+            ncm_forecast = fetch_kma_future_ncm(33.3284, 126.8366, KMA_KEY, target_date)
             if not ncm_forecast.empty:
                 db.save_forecast(ncm_forecast, auto_add_capacity=True)
                 print(f"[{target_date}] ✅ KMA 단독 저장 완료")
@@ -363,7 +363,7 @@ def prepare_model_input(df):
     df['Year_cos'] = np.cos(2 * np.pi * df['timestamp_dt'].dt.dayofyear / 365)
     
     # 1. Extra Radiation 및 태양 고도각
-    lat, lon = 33.3615, 126.5292
+    lat, lon = 33.3284, 126.8366
     times = pd.DatetimeIndex(df['timestamp_dt']).tz_localize('Asia/Seoul')
 
     df['Solar_Elevation'] = pvlib.solarposition.get_solarposition(times, lat, lon)['elevation'].values
