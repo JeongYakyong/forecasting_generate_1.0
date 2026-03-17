@@ -5,6 +5,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from datetime import datetime, timedelta
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ============================================================================
@@ -274,10 +275,13 @@ def fetch_kma_future_ncm(lat, lon, auth_key, base_date_kst):
     session.mount("https://", HTTPAdapter(max_retries=retry))
     
     rows = []
-    print(f"  [KMA NCM] 수집 시작 - {base_time_kst} 이후 27시간 ")
-    print(f" 실제로는 UTC {base_tmfc}, 한국시간보다 12시간 느리게 설정")
+    print(f"  [KMA NCM] 수집 시작 - {target_dt.strftime('%Y-%m-%d')} 00시 ~ 23시")
     
-    for hour in range(28):  # 28시간 예보
+    # 당일 00시(+3h)부터 23시(+26h)까지 정확히 24시간 타겟팅
+    target_hours = range(3, 27)
+    
+    # 개별 요청을 처리할 내부 함수
+    def fetch_hour(hour):
         params = {
             'group': 'KIMG', 'nwp': 'NE57', 'data': 'U',
             'name': 'dswrsfc,t2m,tcld,mcld,lcld,u10m,v10m,snowd,rh2m,rainc_acc,rainl_acc',
@@ -291,10 +295,22 @@ def fetch_kma_future_ncm(lat, lon, auth_key, base_date_kst):
                 data = parse_raw_text_by_varn(resp.text)
                 if data:
                     data['hour_offset'] = hour
-                    rows.append(data)
+                    return data
         except Exception as e:
             print(f"    [Fail] +{hour}h: {e}")
-    
+        return None
+
+    # ThreadPoolExecutor를 이용한 병렬 처리 (최대 8개 스레드 동시 실행)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # 각 시간대별 작업을 스레드풀에 제출
+        future_to_hour = {executor.submit(fetch_hour, h): h for h in target_hours}
+        
+        # 완료되는 순서대로 결과 수집
+        for future in as_completed(future_to_hour):
+            res = future.result()
+            if res:
+                rows.append(res)
+                
     session.close()
     
     if not rows:
@@ -302,6 +318,10 @@ def fetch_kma_future_ncm(lat, lon, auth_key, base_date_kst):
         return pd.DataFrame()
     
     df = pd.DataFrame(rows)
+    
+    # 병렬 처리로 인해 순서가 뒤섞일 수 있으므로 hour_offset 기준으로 정렬
+    df = df.sort_values('hour_offset').reset_index(drop=True)
+    
     df['timestamp'] = base_time_kst + pd.to_timedelta(df['hour_offset'], unit='h')
     df = df.drop('hour_offset', axis=1)
     
@@ -332,5 +352,5 @@ def fetch_kma_future_ncm(lat, lon, auth_key, base_date_kst):
     df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
     df = df.set_index('timestamp')
     
-    print(f"  [KMA NCM] {len(df)}행 수집")
+    print(f"  [KMA NCM] {len(df)}행 수집 완료")
     return df
