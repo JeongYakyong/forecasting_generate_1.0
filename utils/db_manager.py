@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 class JejuEnergyDB:
     """제주 에너지 데이터베이스 최종 버전"""
     def __init__(self, db_path="database/jeju_energy.db"):
@@ -50,6 +49,9 @@ class JejuEnergyDB:
                 midlow_cloud REAL,
                 wd_sin REAL,
                 wd_cos REAL,
+                wind_spd_north REAL,
+                wd_sin_north REAL,
+                wd_cos_north REAL,
                 -- Stored Derived Features
                 Solar_Capacity_Est REAL,
                 Wind_Capacity_Est REAL,
@@ -81,6 +83,9 @@ class JejuEnergyDB:
                 midlow_cloud REAL,
                 wd_sin REAL,
                 wd_cos REAL,
+                wind_spd_north REAL,
+                wd_sin_north REAL,
+                wd_cos_north REAL,
                 -- Capacity (copied from latest historical)
                 Solar_Capacity_Est REAL,
                 Wind_Capacity_Est REAL,
@@ -93,14 +98,22 @@ class JejuEnergyDB:
             )
         """)
           # 기존 DB 마이그레이션: 컬럼이 없으면 추가
-        for col in ['HVDC_Total', 'LNG_Gen', 'Oil_Gen']:
+
+        for col in [  'HVDC_Total', 'LNG_Gen', 'Oil_Gen','wind_spd_north', 'wd_sin_north', 'wd_cos_north']:
             try:
                 cursor.execute(f"ALTER TABLE historical_data ADD COLUMN {col} REAL")
             except Exception:
                 pass  # 이미 존재하면 무시
+            # 2. 예보 테이블 컬럼 추가 (중요: 여기서 north 컬럼이 누락되지 않았는지 확인)
+            try:
+                if "north" in col or col in ['Solar_Capacity_Est', 'Wind_Capacity_Est']: # 필요한 컬럼들
+                    cursor.execute(f"ALTER TABLE forecast_data ADD COLUMN {col} REAL")
+            except Exception:
+                pass
 
         self.conn.commit()
         print("테이블 초기화 완료")
+
     
     # ==========================================
     # 1. 실측 데이터 (Historical)
@@ -127,6 +140,7 @@ class JejuEnergyDB:
             'temp_c', 'rainfall', 'wind_spd', 'humidity', 
             'solar_rad', 'total_cloud', 'midlow_cloud', 
             'wd_sin', 'wd_cos',
+            'wind_spd_north', 'wd_sin_north', 'wd_cos_north',
             'Solar_Capacity_Est', 'Wind_Capacity_Est',
             'Solar_Utilization', 'Wind_Utilization',
             'updated_at'
@@ -258,6 +272,7 @@ class JejuEnergyDB:
             'est_demand', 'smp_jeju', 'smp_land', 'temp_c', 'rainfall', 'wind_spd', 
             'humidity', 'solar_rad', 'total_cloud', 'midlow_cloud',
             'wd_sin', 'wd_cos',
+            'wind_spd_north', 'wd_sin_north', 'wd_cos_north',
             'Solar_Capacity_Est', 'Wind_Capacity_Est',
             'est_Solar_Utilization', 'est_Wind_Utilization',
             'forecast_time', 'updated_at'

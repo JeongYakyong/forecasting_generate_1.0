@@ -153,15 +153,15 @@ def fetch_kpx_historical(start_date, end_date, service_key):
 # 2. KMA API - 기상 데이터
 # ============================================================================
 
-def fetch_kma_past_asos(start_date, end_date, auth_key):
+def fetch_kma_past_asos(start_date, end_date, auth_key, stn_id=189):
     url = "https://apihub.kma.go.kr/api/typ01/url/kma_sfctm3.php"
     
     params = {
         "tm1": f"{start_date}0000",  
         "tm2": f"{end_date}2300",    
-        "stn": "184",  # 제주
-        "authKey": auth_key, 
-        "help": "0"  # 🔥 help=0으로 변경 (컬럼명 헤더 제거)
+        "stn": str(stn_id),          # 파라미터로 받은 관측소 ID 사용
+        "help": "0",
+        "authKey": auth_key
     }
     
     try:
@@ -347,6 +347,112 @@ def fetch_kma_future_ncm(lat, lon, auth_key, base_date_kst):
     if 'rain_conv' in df.columns and 'rain_strat' in df.columns:
         df['rainfall'] = (df['rain_conv'].fillna(0) + df['rain_strat'].fillna(0)).round(2)
         df = df.drop(columns=['rain_conv', 'rain_strat'])
+    
+    # timestamp 포맷 변환
+    df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
+    df = df.set_index('timestamp')
+    
+    print(f"  [KMA NCM] {len(df)}행 수집 완료")
+    return df
+
+def fetch_kma_future_ncm_north(lat, lon, auth_key, base_date_kst):
+    # 변수 매핑
+    VARN_MAP = {
+        20: 'u_wind',         # 동서바람 m/s
+        21: 'v_wind',         # 남북바람 m/s
+    }
+    
+    def parse_raw_text_by_varn(raw_text):
+        parsed_dict = {}
+        lines = raw_text.strip().split('\n')
+        for line in lines:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                varn_code = int(parts[2])
+                value = float(parts[4])
+                if varn_code in VARN_MAP:
+                    parsed_dict[VARN_MAP[varn_code]] = value
+            except (ValueError, IndexError):
+                continue
+        return parsed_dict
+    
+    # 전날 12UTC 사용
+    target_dt = pd.to_datetime(base_date_kst)
+    base_date = (target_dt - pd.Timedelta(days=1)).strftime('%Y%m%d')
+    base_tmfc = base_date + "12"
+    base_time_kst = target_dt - pd.Timedelta(hours=3)  # 전날 21시 KST
+    
+    url = "https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-kim_nc_pt_txt2"
+    
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    
+    rows = []
+    print(f"  [KMA NCM] 수집 시작 - {target_dt.strftime('%Y-%m-%d')} 00시 ~ 23시")
+    
+    # 당일 00시(+3h)부터 23시(+26h)까지 정확히 24시간 타겟팅
+    target_hours = range(3, 27)
+    
+    # 개별 요청을 처리할 내부 함수
+    def fetch_hour(hour):
+        params = {
+            'group': 'KIMG', 'nwp': 'NE57', 'data': 'U',
+            'name': 'u10m,v10m',
+            'tmfc': base_tmfc, 'hf': str(hour),
+            'lat': str(lat), 'lon': str(lon),
+            'disp': 'A', 'help': '0', 'authKey': auth_key
+        }
+        try:
+            resp = session.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                data = parse_raw_text_by_varn(resp.text)
+                if data:
+                    data['hour_offset'] = hour
+                    return data
+        except Exception as e:
+            print(f"    [Fail] +{hour}h: {e}")
+        return None
+
+    # ThreadPoolExecutor를 이용한 병렬 처리 (최대 8개 스레드 동시 실행)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # 각 시간대별 작업을 스레드풀에 제출
+        future_to_hour = {executor.submit(fetch_hour, h): h for h in target_hours}
+        
+        # 완료되는 순서대로 결과 수집
+        for future in as_completed(future_to_hour):
+            res = future.result()
+            if res:
+                rows.append(res)
+                
+    session.close()
+    
+    if not rows:
+        print(f"  [KMA NCM] 데이터 없음")
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(rows)
+    
+    # 병렬 처리로 인해 순서가 뒤섞일 수 있으므로 hour_offset 기준으로 정렬
+    df = df.sort_values('hour_offset').reset_index(drop=True)
+    
+    df['timestamp'] = base_time_kst + pd.to_timedelta(df['hour_offset'], unit='h')
+    df = df.drop('hour_offset', axis=1)
+    
+    # 후처리 (수정된 부분)
+    if 'u_wind' in df.columns and 'v_wind' in df.columns:
+        # 아예 처음부터 _north를 붙여서 컬럼 생성
+        df['wind_spd_north'] = np.sqrt(df['u_wind']**2 + df['v_wind']**2).round(2)
+        wind_dir = (270 - np.degrees(np.arctan2(df['v_wind'], df['u_wind']))) % 360
+        df['wd_sin_north'] = np.sin(np.radians(wind_dir)).round(4)
+        df['wd_cos_north'] = np.cos(np.radians(wind_dir)).round(4)
+        
+        # 임시 변수 삭제
+        df = df.drop(columns=['u_wind', 'v_wind'])
     
     # timestamp 포맷 변환
     df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')

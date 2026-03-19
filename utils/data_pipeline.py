@@ -4,7 +4,8 @@ from utils.api_fetchers import (
     fetch_kpx_future,
     fetch_kpx_historical,
     fetch_kma_past_asos,
-    fetch_kma_future_ncm
+    fetch_kma_future_ncm,
+    fetch_kma_future_ncm_north
 )
 import pandas as pd
 import pvlib
@@ -93,11 +94,37 @@ def daily_historical_update(start_date, end_date):
 
     asos_data = pd.DataFrame()
     try:
-        asos_data = fetch_kma_past_asos(
+        # 남쪽 베이스 호출 (189)
+        asos_south = fetch_kma_past_asos(
             start_date.replace('-', ''), 
             end_date.replace('-', ''), 
-            KMA_KEY
+            KMA_KEY,
+            stn_id=189
         )
+        
+        # 북쪽 풍력 전용 호출 (185)
+        asos_north = fetch_kma_past_asos(
+            start_date.replace('-', ''), 
+            end_date.replace('-', ''), 
+            KMA_KEY,
+            stn_id=185
+        )
+        
+        if not asos_south.empty and not asos_north.empty:
+            # 북쪽 데이터에서 필요한 3개만 뽑아 이름 변경
+            asos_north = asos_north[['wind_spd', 'wd_sin', 'wd_cos']].rename(
+                columns={
+                    'wind_spd': 'wind_spd_north', 
+                    'wd_sin': 'wd_sin_north', 
+                    'wd_cos': 'wd_cos_north'
+                }
+            )
+            # 남쪽 베이스에 북쪽 3개 컬럼을 합침
+            asos_data = pd.concat([asos_south, asos_north], axis=1)
+        else:
+            asos_data = asos_south # 북쪽 실패시 남쪽이라도 사용
+            print(f"북쪽 ASOS 데이터 로드 실패 : 남쪽 ASOS 데이터 적용")
+
     except Exception as e:
         print(f"[Fail] KMA 실측 기상 API 호출 실패: {e}")
 
@@ -201,20 +228,48 @@ def daily_historical_kma(start_date, end_date):
     print(f"KMA 기상 실측 업데이트 시작: {start_date} ~ {end_date}")
     db = JejuEnergyDB()
     
+    asos_data = pd.DataFrame()
     try:
-        asos_data = fetch_kma_past_asos(
+        # 남쪽 베이스 호출 (189)
+        asos_south = fetch_kma_past_asos(
             start_date.replace('-', ''), 
             end_date.replace('-', ''), 
-            KMA_KEY  # 전역 변수나 설정에서 가져와야 함
+            KMA_KEY,
+            stn_id=189
         )
+        
+        # 북쪽 풍력 전용 호출 (185)
+        asos_north = fetch_kma_past_asos(
+            start_date.replace('-', ''), 
+            end_date.replace('-', ''), 
+            KMA_KEY,
+            stn_id=185
+        )
+        
+        if not asos_south.empty and not asos_north.empty:
+            # 북쪽 데이터에서 필요한 3개만 뽑아 이름 변경
+            asos_north = asos_north[['wind_spd', 'wd_sin', 'wd_cos']].rename(
+                columns={
+                    'wind_spd': 'wind_spd_north', 
+                    'wd_sin': 'wd_sin_north', 
+                    'wd_cos': 'wd_cos_north'
+                }
+            )
+            # 남쪽 베이스에 북쪽 3개 컬럼을 합침
+            asos_data = pd.concat([asos_south, asos_north], axis=1)
+        else:
+            asos_data = asos_south # 북쪽 실패시 남쪽이라도 사용
+
+        # DB 저장 로직 추가
         if not asos_data.empty:
             db.save_historical(asos_data)
-            print(f"[OK] KMA 기상 데이터 {len(asos_data)}행 업데이트 완료")
+            print("[Success] KMA 실측 기상 데이터 병합 및 DB 저장 완료")
         else:
-            print("[Fail] 수집된 KMA 데이터가 없습니다.")
-            
+            print("[Warning] KMA 실측 기상 데이터가 비어있어 저장하지 않았습니다.")
+
     except Exception as e:
-        print(f"[Fail] KMA 기상 데이터 처리 실패: {e}")
+        print(f"[Fail] KMA 실측 기상 API 호출 실패: {e}")
+        
     finally:
         db.close()
 
@@ -245,7 +300,7 @@ def daily_forecast_and_predict(start_date, end_date):
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     
-    print(f"🔄 통합 예보 업데이트 시작: {start_date} ~ {end_date}")
+    print(f"[Start] 통합 예보 업데이트 시작: {start_date} ~ {end_date}")
     db = JejuEnergyDB()
     current_dt = start_dt
     
@@ -262,11 +317,21 @@ def daily_forecast_and_predict(start_date, end_date):
         except Exception as e:
             print(f"  └── [Error] KPX API 실패: {e}")
             
-        # 2. KMA 수집
+        # 2. KMA 수집 (남쪽 및 북쪽 분리 호출)
         try:
-            # 좌표 33.50, 126.53은 예시입니다.
-            ncm_forecast = fetch_kma_future_ncm(33.50, 126.53, KMA_KEY, target_date)
-            if not ncm_forecast.empty: kma_data = ncm_forecast
+            # 남쪽 데이터 (태양광 및 모든 기본 변수)
+            ncm_south = fetch_kma_future_ncm(33.3284, 126.8366, KMA_KEY, target_date)
+            
+            # 북쪽 데이터 (풍력 전용 함수 사용)
+            ncm_north = fetch_kma_future_ncm_north(33.5168, 126.5347, KMA_KEY, target_date)
+            
+            if not ncm_south.empty and not ncm_north.empty:
+                # 함수 내부에서 이미 _north 이름표를 달고 나오므로, 별도 가공 없이 바로 병합
+                kma_data = pd.concat([ncm_south, ncm_north], axis=1)
+            elif not ncm_south.empty:
+                kma_data = ncm_south
+                print("  └── [Warning] 북쪽 KMA 데이터를 가져오지 못해 남쪽 데이터만 사용합니다.")
+                
         except Exception as e:
             print(f"  └── [Error] KMA API 실패: {e}")
             
@@ -274,21 +339,20 @@ def daily_forecast_and_predict(start_date, end_date):
         if kpx_data is not None and kma_data is not None:
             combined_data = pd.merge(kpx_data, kma_data, left_index=True, right_index=True, how='outer')
             db.save_forecast(combined_data, auto_add_capacity=True)
-            print(f"  └── ✅ KPX & KMA 병합 데이터 DB 저장 완료")
+            print(f"  └── [Success] KPX & KMA 병합 데이터 DB 저장 완료")
         elif kpx_data is not None:
             db.save_forecast(kpx_data, auto_add_capacity=True)
-            print(f"  └── ✅ KPX 데이터만 DB 저장 완료")
+            print(f"  └── [Success] KPX 데이터만 DB 저장 완료")
         elif kma_data is not None:
             db.save_forecast(kma_data, auto_add_capacity=True)
-            print(f"  └── ✅ KMA 데이터만 DB 저장 완료")
+            print(f"  └── [Success] KMA 데이터만 DB 저장 완료")
         else:
-            print(f"  └── ❌ 저장할 데이터가 없습니다.")
+            print(f"  └── [Fail] 저장할 데이터가 없습니다.")
             
         current_dt += timedelta(days=1)
         
     db.close()
     print("[OK] 전체 예보 통합 업데이트 완료")
-
 
 def daily_forecast_kpx(start_date, end_date):
     """ KPX 예보 데이터만 단독 수집 """
@@ -314,29 +378,44 @@ def daily_forecast_kpx(start_date, end_date):
         current_dt += timedelta(days=1)
     db.close()
 
-
 def daily_forecast_kma(start_date, end_date):
     """ KMA 예보 데이터만 단독 수집 """
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     
-    print(f"🌤️ KMA 단독 예보 업데이트 시작: {start_date} ~ {end_date}")
+    print(f"[Start] KMA 단독 예보 업데이트 시작: {start_date} ~ {end_date}")
     db = JejuEnergyDB()
     current_dt = start_dt
     
     while current_dt <= end_dt:
         target_date = current_dt.strftime("%Y-%m-%d")
         try:
-            ncm_forecast = fetch_kma_future_ncm(33.3284, 126.8366, KMA_KEY, target_date)
-            if not ncm_forecast.empty:
-                db.save_forecast(ncm_forecast, auto_add_capacity=True)
-                print(f"[{target_date}] ✅ KMA 단독 저장 완료")
+            # 남쪽 데이터 (태양광 및 기본 변수용)
+            ncm_south = fetch_kma_future_ncm(33.3284, 126.8366, KMA_KEY, target_date)
+            
+            # 북쪽 데이터 (풍력 전용)
+            ncm_north = fetch_kma_future_ncm_north(33.5168, 126.5347, KMA_KEY, target_date)
+            
+            kma_data = pd.DataFrame()
+            
+            if not ncm_south.empty and not ncm_north.empty:
+                # ncm_north는 이미 내부에 _north 컬럼명을 가지고 반환되므로 바로 병합
+                kma_data = pd.concat([ncm_south, ncm_north], axis=1)
+            elif not ncm_south.empty:
+                kma_data = ncm_south
+                print(f"[{target_date}] [Warning] 북쪽 KMA 데이터를 가져오지 못해 남쪽 데이터만 사용합니다.")
+            
+            if not kma_data.empty:
+                db.save_forecast(kma_data, auto_add_capacity=True)
+                print(f"[{target_date}] [Success] KMA 단독 저장 완료")
             else:
-                print(f"[{target_date}] ❌ KMA 데이터 없음")
+                print(f"[{target_date}] [Fail] KMA 데이터 없음")
+                
         except Exception as e:
             print(f"[{target_date}] [Error] KMA API 실패: {e}")
             
         current_dt += timedelta(days=1)
+        
     db.close()
     
 # ============================================================================
@@ -390,7 +469,6 @@ def prepare_model_input(df):
     
     return df
 
-
 def run_model_prediction(target_date, db, assets):
     solar_model, wind_model, scalers, metadata, device = assets 
     
@@ -430,11 +508,18 @@ def run_model_prediction(target_date, db, assets):
     future_df = df.iloc[seq_len:total_len]
     
     # 2. 모델이 "실제로 사용하는" 데이터만 콕 집어서 결측치 확인!
+    # [중요 변경] 풍력 모델의 결측치 검사는 실제 북쪽 데이터를 대상으로 수행해야 합니다.
+    north_mapping = {
+        'wind_spd': 'wind_spd_north',
+        'wd_sin': 'wd_sin_north',
+        'wd_cos': 'wd_cos_north'
+    }
+    check_features_wind = [north_mapping.get(col, col) for col in future_features_wind]
+    
     # 통합 피처 리스트 (중복 제거)
-    used_features = list(set(future_features_solar + future_features_wind))
+    used_features = list(set(future_features_solar + check_features_wind))
     target_cols = ['Solar_Utilization', 'Wind_Utilization']
     
-    # [핵심] 과거는 피처+정답값 모두 검사, 미래는 피처만 검사 (미래 정답값은 당연히 없으므로 제외)
     past_missing = past_df[used_features + target_cols].isnull().sum().sum()
     future_missing = future_df[used_features].isnull().sum().sum()
     real_missing_cnt = int(past_missing + future_missing)
@@ -443,24 +528,30 @@ def run_model_prediction(target_date, db, assets):
     input_info["past_hours_found"] = len(past_df)
     input_info["future_hours_found"] = len(future_df)
     
-    # 3. 🚨 진짜 결측치가 있으면 단호하게 에러 반환! (보간 절대 안 함)
+    # 3. 진짜 결측치가 있으면 단호하게 에러 반환
     if real_missing_cnt > 0:
         return False, f"모델 입력 데이터에 {real_missing_cnt}개의 실제 결측치가 존재합니다. [Option A]에서 데이터를 점검하세요.", input_info
         
-    # 4. 검증을 무사히 통과했다면, 모델이 쓰지 않는 껍데기 컬럼(예: 미래 실측값)의 NaN만 
-    # 파이토치 텐서 변환 시 에러가 나지 않도록 0으로 덮어줌 (데이터 왜곡 없음)
+    # 4. 검증 통과 시 나머지 껍데기 컬럼(예: 미래 실측값) 0으로 채움
     df = df.fillna(0)
     
     # ==========================================
-    # 태양광 / 풍력 독립 스케일링 (정상일 때만 진행)
+    # 태양광 / 풍력 독립 스케일링 및 풍력 데이터 덮어쓰기
     # ==========================================
     scaler_solar = scalers['solar']
     scaler_wind = scalers['wind']
     
+    # 태양광
     df_solar = df.copy()
     df_solar[future_features_solar] = scaler_solar.transform(df_solar[future_features_solar])
     
+    # 풍력 (스케일링 전 북쪽 데이터로 덮어쓰기)
     df_wind = df.copy()
+    if 'wind_spd_north' in df_wind.columns:
+        df_wind['wind_spd'] = df_wind['wind_spd_north']
+        df_wind['wd_sin'] = df_wind['wd_sin_north']
+        df_wind['wd_cos'] = df_wind['wd_cos_north']
+        
     df_wind[future_features_wind] = scaler_wind.transform(df_wind[future_features_wind])
     
     def create_batch_from_scaled(df_target, future_features_list, target_col):
@@ -482,12 +573,12 @@ def run_model_prediction(target_date, db, assets):
     # 배치 생성 및 모델 추론
     # ==========================================
     try:
-        # ☀️ 태양광 추론
+        # 태양광 추론
         solar_batch = create_batch_from_scaled(df_solar, future_features_solar, 'Solar_Utilization')
         with torch.no_grad():
             pred_solar = solar_model(solar_batch, device=device).squeeze().cpu().numpy()
             
-        # 🌬️ 풍력 추론
+        # 풍력 추론
         wind_batch = create_batch_from_scaled(df_wind, future_features_wind, 'Wind_Utilization')
         with torch.no_grad():
             pred_wind = wind_model(wind_batch, device=device).squeeze().cpu().numpy()
@@ -506,7 +597,18 @@ def run_model_prediction(target_date, db, assets):
         'est_Solar_Utilization': pred_solar,
         'est_Wind_Utilization': pred_wind
     })
+    future_only_df = df.iloc[seq_len:total_len]
+
+    print(f"DEBUG: --- 미래 24시간 구간 데이터만 확인 ---")
+    print(f"DEBUG: Future Utilization Mean = {future_only_df['est_Wind_Utilization'].mean():.4f}")
+    print(f"DEBUG: Future Capacity Mean = {future_only_df['Wind_Capacity_Est'].mean():.2f}")
+
+    # 가동률 * 용량 계산
+    df['est_wind_gen'] = df['est_Wind_Utilization'] * df['Wind_Capacity_Est']
+    future_gen_mean = df.iloc[seq_len:total_len]['est_wind_gen'].mean()
+    print(f"DEBUG: Future Gen Mean = {future_gen_mean:.2f}")
     
     updated_rows = db.update_forecast_predictions(pred_df)
+
     
-    return True, f"✅ [{target_date}] 태양광/풍력 예측 완료 및 {updated_rows}행 저장 성공!", input_info
+    return True, f"[Success] [{target_date}] 태양광/풍력 예측 완료 및 {updated_rows}행 저장 성공!", input_info

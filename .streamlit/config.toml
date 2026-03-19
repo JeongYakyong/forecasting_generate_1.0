@@ -1,0 +1,9 @@
+# .streamlit/config.toml
+[server]
+headless = true
+address = "0.0.0.0"
+port = 8501
+
+# 간단한 보안 설정 (원하실 경우)
+[auth]
+password = "cbo3"
